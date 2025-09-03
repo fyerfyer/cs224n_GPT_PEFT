@@ -28,9 +28,10 @@ class GPT2Layer(nn.Module):
       - GPT-2 layer applies dropout to the transformed output of each sub-layer,
         before it is added to the sub-layer input. WE DO NOT APPLY THE LAYER NORM
         IN THIS FUNCTION.
-    """
+    """ 
     ### YOUR CODE HERE
-    raise NotImplementedError
+    output = dropout(dense_layer(output))
+    return input + output
 
 
   def forward(self, hidden_states, attention_mask):
@@ -43,5 +44,18 @@ class GPT2Layer(nn.Module):
     """
 
     ### YOUR CODE HERE
-    raise NotImplementedError
+
+    # Self-attention & Add&Norm
+    # Self-attention with Pre-LayerNorm
+    ln_output = self.attention_layer_norm(hidden_states)
+    att_output = self.self_attention(ln_output, attention_mask)
+    hidden_states = self.add(hidden_states, att_output, self.attention_dense, self.attention_dropout)
+    
+    # Feed-forward with Pre-LayerNorm
+    ln_output = self.out_layer_norm(hidden_states)
+    interm_output = self.interm_af(self.interm_dense(ln_output))
+    hidden_states = self.add(hidden_states, interm_output, self.out_dense, self.out_dropout)
+    
+    return hidden_states
+
 

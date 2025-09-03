@@ -1,7 +1,9 @@
+import math
 import torch
 
 from einops import rearrange
 from torch import nn
+import torch.nn.functional as F
 
 
 class CausalSelfAttention(nn.Module):
@@ -34,8 +36,32 @@ class CausalSelfAttention(nn.Module):
   def attention(self, key, query, value, attention_mask):
 
     ### YOUR CODE HERE
-    raise NotImplementedError
+    
+    # Calculate attention scores.
+    # (B, nh, T, d_k) x (B, nh, d_k, T) -> (B, nh, T, T)
+    att = torch.matmul(query, key.transpose(-2, -1))
+    att = att / math.sqrt(query.size(-1))
 
+    # Apply the causal mask.
+    seq_len = query.size(-2)
+    causal_mask = torch.tril(torch.ones(seq_len, seq_len, device=query.device))
+    att = att.masked_fill(causal_mask == 0, float('-inf'))
+
+    # Apply the mask if needed 
+    if attention_mask is not None:
+      att = att + attention_mask
+
+    # Normalize the scores to get attention weights.
+    att = F.softmax(att, dim=-1)
+
+    # Apply dropout.
+    att = self.dropout(att)
+
+    # Multiply weights by values.
+    # (B, nh, T, T) x (B, nh, T, d_k) -> (B, nh, T, d_k)
+    att = torch.matmul(att, value)
+
+    return att 
 
   def forward(self, hidden_states, attention_mask):
     """
@@ -52,4 +78,5 @@ class CausalSelfAttention(nn.Module):
     
     # Calculate the multi-head attention.
     attn_value = self.attention(key_layer, query_layer, value_layer, attention_mask)
+    attn_value = rearrange(attn_value, 'b h t d -> b t (h d)')
     return attn_value
