@@ -61,7 +61,34 @@ class AdamW(Optimizer):
                 ###
                 ###       Refer to the default project handout for more details.
                 ### YOUR CODE HERE
-                raise NotImplementedError
+                if len(state) == 0:
+                    state["step"] = 0
+                    state["exp_avg"] = torch.zeros_like(grad, memory_format=torch.preserve_format) # m_t
+                    state["exp_avg_sq"] = torch.zeros_like(grad, memory_format=torch.preserve_format) # m_t
 
+                exp_avg, exp_avg_sq = state["exp_avg"], state["exp_avg_sq"]
+                beta_1, beta_2 = group["betas"]
+
+                # Increment step first so `t` is 1-indexed (matches Adam formulas)
+                state["step"] += 1
+                t = state["step"]
+
+                state["exp_avg"] = exp_avg * beta_1 + grad * (1 - beta_1)
+                state["exp_avg_sq"] = exp_avg_sq * beta_2 + grad * grad * (1 - beta_2)
+                exp_avg, exp_avg_sq = state["exp_avg"], state["exp_avg_sq"]
+
+                step_size = alpha
+                if group["correct_bias"]:
+                    bias1 = 1.0 - beta_1 ** t 
+                    bias2 = 1.0 - beta_2 ** t 
+                    step_size = alpha * math.sqrt(bias2) / bias1
+
+                # Apply weight decay
+                if group["weight_decay"] != 0.0:
+                    p.data = p.data * (1 - alpha * group["weight_decay"])
+
+                # Update parameters
+                denom = exp_avg_sq.sqrt() + group["eps"]
+                p.data = p.data - step_size * exp_avg / denom
 
         return loss
