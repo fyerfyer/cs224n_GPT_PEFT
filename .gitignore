@@ -7,3 +7,9 @@
 out/
 
 self-docs/
+.roomodes
+generate_mcp_yaml.py
+install_rooflow.sh
+.roo/
+
+LoRA_Implementation_README.md
