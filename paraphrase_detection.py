@@ -72,7 +72,14 @@ class ParaphraseGPT(nn.Module):
 
     'Takes a batch of sentences and produces embeddings for them.'
     ### YOUR CODE HERE
-    raise NotImplementedError
+    outputs = self.gpt(input_ids, attention_mask)
+    # Get the hidden state of the last token for each sequence
+    last_token_hidden = outputs['last_token']  # [batch_size, hidden_size]
+    
+    # Pass through the paraphrase detection head to get binary classification logits
+    logits = self.paraphrase_detection_head(last_token_hidden)  # [batch_size, 2]
+    
+    return logits
 
 
 

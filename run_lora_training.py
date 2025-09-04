@@ -1,0 +1,101 @@
+"""
+Simple script to run LoRA fine-tuning for paraphrase detection.
+
+This script provides an easy way to run the LoRA-enabled paraphrase detection
+training with sensible defaults.
+"""
+
+import subprocess
+import sys
+import argparse
+
+
+def run_lora_training(args):
+    """Run LoRA training with the specified arguments."""
+    
+    cmd = [
+        sys.executable, "lora_paraphrase_detection.py",
+        "--para_train", args.para_train,
+        "--para_dev", args.para_dev,
+        "--para_test", args.para_test,
+        "--epochs", str(args.epochs),
+        "--batch_size", str(args.batch_size),
+        "--lr", str(args.lr),
+        "--lora_rank", str(args.lora_rank),
+        "--lora_alpha", str(args.lora_alpha),
+        "--lora_dropout", str(args.lora_dropout),
+        "--model_size", args.model_size,
+        "--seed", str(args.seed)
+    ]
+    
+    if args.use_gpu:
+        cmd.append("--use_gpu")
+    
+    print("Running LoRA fine-tuning with command:")
+    print(" ".join(cmd))
+    print()
+    
+    try:
+        subprocess.run(cmd, check=True)
+        print("LoRA training completed successfully!")
+    except subprocess.CalledProcessError as e:
+        print(f"Training failed with error code {e.returncode}")
+        sys.exit(1)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Run LoRA fine-tuning for paraphrase detection")
+    
+    # Data arguments
+    parser.add_argument("--para_train", type=str, default="data/quora-train.csv",
+                       help="Path to training data")
+    parser.add_argument("--para_dev", type=str, default="data/quora-dev.csv",
+                       help="Path to dev data")
+    parser.add_argument("--para_test", type=str, default="data/quora-test-student.csv",
+                       help="Path to test data")
+    
+    # Training arguments
+    parser.add_argument("--epochs", type=int, default=3,
+                       help="Number of training epochs")
+    parser.add_argument("--batch_size", type=int, default=8,
+                       help="Batch size")
+    parser.add_argument("--lr", type=float, default=1e-4,
+                       help="Learning rate")
+    parser.add_argument("--use_gpu", action="store_true",
+                       help="Use GPU for training")
+    parser.add_argument("--seed", type=int, default=11711,
+                       help="Random seed")
+    
+    # Model arguments
+    parser.add_argument("--model_size", type=str, default="gpt2",
+                       choices=["gpt2", "gpt2-medium", "gpt2-large"],
+                       help="GPT-2 model size")
+    
+    # LoRA arguments
+    parser.add_argument("--lora_rank", type=int, default=4,
+                       help="LoRA rank")
+    parser.add_argument("--lora_alpha", type=float, default=16.0,
+                       help="LoRA alpha parameter")
+    parser.add_argument("--lora_dropout", type=float, default=0.0,
+                       help="LoRA dropout rate")
+    
+    args = parser.parse_args()
+    
+    print("=" * 60)
+    print("LoRA Fine-tuning for Paraphrase Detection")
+    print("=" * 60)
+    print(f"Model: {args.model_size}")
+    print(f"LoRA Rank: {args.lora_rank}")
+    print(f"LoRA Alpha: {args.lora_alpha}")
+    print(f"Learning Rate: {args.lr}")
+    print(f"Epochs: {args.epochs}")
+    print(f"Batch Size: {args.batch_size}")
+    print(f"GPU: {args.use_gpu}")
+    print("=" * 60)
+    print()
+    
+    run_lora_training(args)
+
+
+if __name__ == "__main__":
+    main()
