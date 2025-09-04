@@ -45,15 +45,18 @@ class GPT2Layer(nn.Module):
 
     ### YOUR CODE HERE
 
-    # Self-attention & Add&Norm
-    # Self-attention with Pre-LayerNorm
+    # Self-attention sub-layer with pre-layer norm
+    residual = hidden_states
     ln_output = self.attention_layer_norm(hidden_states)
     att_output = self.self_attention(ln_output, attention_mask)
-    hidden_states = self.add(hidden_states, att_output, self.attention_dense, self.attention_dropout)
-    
-    # Feed-forward with Pre-LayerNorm
+    dense_output = self.attention_dense(att_output)
+    hidden_states = residual + self.attention_dropout(dense_output)
+
+    # Feed-forward sub-layer with pre-layer norm
+    residual = hidden_states
     ln_output = self.out_layer_norm(hidden_states)
     interm_output = self.interm_af(self.interm_dense(ln_output))
-    hidden_states = self.add(hidden_states, interm_output, self.out_dense, self.out_dropout)
-    
+    dense_output = self.out_dense(interm_output)
+    hidden_states = residual + self.out_dropout(dense_output)
+        
     return hidden_states
