@@ -23,17 +23,37 @@ TQDM_DISABLE = False
 def model_eval_paraphrase(dataloader, model, device):
   model.eval()  # Switch to eval model, will turn off randomness like dropout.
   y_true, y_pred, sent_ids = [], [], []
+  
+  # Token IDs for "yes" and "no" as specified in the task
+  YES_TOKEN_ID = 8505
+  NO_TOKEN_ID = 3919
+  
   for step, batch in enumerate(tqdm(dataloader, desc=f'eval', disable=TQDM_DISABLE)):
-    b_ids, b_mask, b_sent_ids, labels = batch['token_ids'], batch['attention_mask'], batch['sent_ids'], batch[
-      'labels'].flatten()
+    b_ids, b_mask, b_sent_ids = batch['token_ids'], batch['attention_mask'], batch['sent_ids']
+    raw_labels = batch['labels']
 
     b_ids = b_ids.to(device)
     b_mask = b_mask.to(device)
+    
+    # Handle tokenized labels (convert from token IDs to binary labels)
+    if raw_labels.dim() > 1:
+        label_ids = raw_labels[:, -1].long()  # Take last token of each sequence
+    else:
+        label_ids = raw_labels.long()
+    
+    # Convert token IDs to binary labels (same logic as training)
+    if label_ids.max() > 1:
+        binary_labels = torch.zeros(label_ids.size(0), dtype=torch.long)
+        binary_labels[label_ids == YES_TOKEN_ID] = 1  # "yes" -> 1
+        binary_labels[label_ids == NO_TOKEN_ID] = 0   # "no" -> 0
+        labels = binary_labels
+    else:
+        labels = label_ids
 
     logits = model(b_ids, b_mask).cpu().numpy()
     preds = np.argmax(logits, axis=1).flatten()
 
-    y_true.extend(labels)
+    y_true.extend(labels.numpy() if isinstance(labels, torch.Tensor) else labels)
     y_pred.extend(preds)
     sent_ids.extend(b_sent_ids)
 

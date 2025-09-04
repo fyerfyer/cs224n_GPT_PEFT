@@ -215,7 +215,9 @@ class LoRAGPT2Model(GPTPreTrainedModel):
         sequence_output = self.final_layer_norm(sequence_output)
 
         # Get the hidden state of the final token
-        last_non_pad_idx = attention_mask.sum(dim=1) - 1
+        # attention_mask can be a float tensor; make sure the computed indices are integer type
+        # also clamp to 0 to avoid negative indices when a sequence might be entirely padding
+        last_non_pad_idx = (attention_mask.sum(dim=1) - 1).clamp(min=0).long()
         last_token = sequence_output[torch.arange(sequence_output.shape[0]), last_non_pad_idx]
 
         return {'last_hidden_state': sequence_output, 'last_token': last_token}

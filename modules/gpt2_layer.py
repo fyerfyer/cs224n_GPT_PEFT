@@ -57,5 +57,3 @@ class GPT2Layer(nn.Module):
     hidden_states = self.add(hidden_states, interm_output, self.out_dense, self.out_dropout)
     
     return hidden_states
-
-
