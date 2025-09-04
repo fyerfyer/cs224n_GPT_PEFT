@@ -180,7 +180,15 @@ def train(args):
             # Get batch data
             b_ids = batch['token_ids'].to(device)
             b_mask = batch['attention_mask'].to(device)
-            labels = batch['labels'].flatten().to(device)
+            
+            # Labels are now single token IDs from optimized dataset
+            label_ids = batch['labels'].to(device).long()
+            
+            # Convert token IDs to binary class labels for cross-entropy loss
+            binary_labels = torch.zeros(label_ids.size(0), dtype=torch.long, device=device)
+            binary_labels[label_ids == YES_TOKEN_ID] = 1  # "yes" -> class 1
+            binary_labels[label_ids == NO_TOKEN_ID] = 0   # "no" -> class 0
+            labels = binary_labels
 
             # Forward pass
             optimizer.zero_grad()

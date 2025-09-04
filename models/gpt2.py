@@ -91,7 +91,10 @@ class GPT2Model(GPTPreTrainedModel):
     sequence_output = self.final_layer_norm(sequence_output)
 
     # Get the hidden state of the final token.
-    last_non_pad_idx = attention_mask.sum(dim=1) - 1  # Subtract 1 to get last index
+    # Ensure the index tensor is an integer type (long) for advanced indexing.
+    # Also clamp to >= 0 to avoid -1 when a sequence is fully padded.
+    last_non_pad_idx = attention_mask.long().sum(dim=1) - 1  # Subtract 1 to get last index
+    last_non_pad_idx = last_non_pad_idx.clamp(min=0)
     last_token = sequence_output[torch.arange(sequence_output.shape[0]), last_non_pad_idx]
 
     return {'last_hidden_state': sequence_output, 'last_token': last_token}

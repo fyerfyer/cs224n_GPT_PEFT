@@ -56,11 +56,11 @@ def main():
     
     # Training arguments
     parser.add_argument("--epochs", type=int, default=3,
-                       help="Number of training epochs")
-    parser.add_argument("--batch_size", type=int, default=8,
-                       help="Batch size")
+                       help="Number of training epochs (recommended: 3-4)")
+    parser.add_argument("--batch_size", type=int, default=12,
+                       help="Batch size (Tesla T4 safe: 8-16, can try 12-20)")
     parser.add_argument("--lr", type=float, default=1e-4,
-                       help="Learning rate")
+                       help="Learning rate (LoRA recommended: 1e-4 to 2e-4)")
     parser.add_argument("--use_gpu", action="store_true",
                        help="Use GPU for training")
     parser.add_argument("--seed", type=int, default=11711,
@@ -71,28 +71,30 @@ def main():
                        choices=["gpt2", "gpt2-medium", "gpt2-large"],
                        help="GPT-2 model size")
     
-    # LoRA arguments
-    parser.add_argument("--lora_rank", type=int, default=4,
-                       help="LoRA rank")
+    # LoRA arguments (Tesla T4 optimized defaults)
+    parser.add_argument("--lora_rank", type=int, default=8,
+                       help="LoRA rank (recommended: 4-16 for good performance/memory balance)")
     parser.add_argument("--lora_alpha", type=float, default=16.0,
-                       help="LoRA alpha parameter")
-    parser.add_argument("--lora_dropout", type=float, default=0.0,
-                       help="LoRA dropout rate")
+                       help="LoRA alpha parameter (typically rank * 2-4)")
+    parser.add_argument("--lora_dropout", type=float, default=0.1,
+                       help="LoRA dropout rate (0.0-0.1 for regularization)")
     
     args = parser.parse_args()
     
-    print("=" * 60)
-    print("LoRA Fine-tuning for Paraphrase Detection")
-    print("=" * 60)
+    print("=" * 70)
+    print("🚀 OPTIMIZED LoRA Fine-tuning for Paraphrase Detection")
+    print("=" * 70)
     print(f"Model: {args.model_size}")
-    print(f"LoRA Rank: {args.lora_rank}")
-    print(f"LoRA Alpha: {args.lora_alpha}")
-    print(f"Learning Rate: {args.lr}")
-    print(f"Epochs: {args.epochs}")
-    print(f"Batch Size: {args.batch_size}")
-    print(f"GPU: {args.use_gpu}")
-    print("=" * 60)
-    print()
+    print(f"LoRA Configuration:")
+    print(f"  - Rank: {args.lora_rank}")
+    print(f"  - Alpha: {args.lora_alpha}")
+    print(f"  - Dropout: {args.lora_dropout}")
+    print(f"Training Parameters:")
+    print(f"  - Learning Rate: {args.lr}")
+    print(f"  - Epochs: {args.epochs}")
+    print(f"  - Batch Size: {args.batch_size}")
+    print(f"  - GPU: {args.use_gpu}")
+    print("=" * 70)
     
     run_lora_training(args)
 
