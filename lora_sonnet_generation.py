@@ -30,6 +30,66 @@ from optimizer import AdamW
 TQDM_DISABLE = False
 
 
+class EarlyStopping:
+    """Early stops the training if validation loss doesn't improve after a given patience."""
+    
+    def __init__(self, patience=5, min_improvement=0.01, verbose=True):
+        """
+        Args:
+            patience (int): How long to wait after last time validation loss improved.
+                          Default: 5
+            min_improvement (float): Minimum change in the monitored quantity to qualify as an improvement.
+                          Default: 0.01
+            verbose (bool): If True, prints a message for each validation loss improvement.
+                          Default: True
+        """
+        self.patience = patience
+        self.min_improvement = min_improvement
+        self.verbose = verbose
+        self.counter = 0
+        self.best_score = None
+        self.early_stop = False
+        self.val_loss_min = float('inf')
+        self.improved = False
+
+    def __call__(self, val_loss):
+        """
+        Call this method after each validation phase.
+        
+        Args:
+            val_loss (float): Current validation loss
+            
+        Returns:
+            bool: True if training should be stopped early
+        """
+        score = -val_loss
+        self.improved = False
+
+        if self.best_score is None:
+            self.best_score = score
+            self.save_checkpoint(val_loss)
+            self.improved = True
+        elif score < self.best_score + self.min_improvement:
+            self.counter += 1
+            if self.verbose:
+                print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_score = score
+            self.save_checkpoint(val_loss)
+            self.counter = 0
+            self.improved = True
+
+        return self.early_stop
+
+    def save_checkpoint(self, val_loss):
+        """Saves model when validation loss decrease."""
+        if self.verbose:
+            print(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Model checkpoint updated.')
+        self.val_loss_min = val_loss
+
+
 # Fix the random seed.
 def seed_everything(seed=11711):
   random.seed(seed)
@@ -192,8 +252,16 @@ def train(args):
   print(f"Optimizing {len(lora_parameters)} LoRA parameter tensors")
   optimizer = AdamW(lora_parameters, lr=args.lr)
 
-  best_val_loss = float('inf')
+  # Initialize early stopping
+  early_stopping = EarlyStopping(patience=args.early_stopping_patience,
+                                min_improvement=args.min_improvement,
+                                verbose=True)
 
+  best_val_loss = float('inf')
+  best_epoch = -1
+
+  print(f"Training with early stopping (patience={args.early_stopping_patience}, min_improvement={args.min_improvement})")
+  
   # Run for the specified number of epochs.
   for epoch in range(args.epochs):
     # Training phase
@@ -242,21 +310,37 @@ def train(args):
     
     val_loss = val_loss / num_val_batches
     
-    print(f"Epoch {epoch}: train loss :: {train_loss:.3f}, val loss :: {val_loss:.3f}")
-    
-    # Save best model
+    # Check for improvement
+    improvement_status = ""
     if val_loss < best_val_loss:
       best_val_loss = val_loss
+      best_epoch = epoch
       save_model(model, optimizer, args, args.filepath)
-      print(f"New best validation loss: {best_val_loss:.3f}")
+      improvement_status = " ⭐ NEW BEST!"
     
-    # Generate sample sonnets
-    print('Generating several output sonnets...')
-    model.eval()
-    for batch in held_out_sonnet_dataset:
-      encoding = model.tokenizer(batch[1], return_tensors='pt', padding=True, truncation=True).to(device)
-      output = model.generate(encoding['input_ids'], temperature=args.temperature, top_p=args.top_p)
-      print(f'{batch[1]}{output[1]}\n\n')
+    print(f"Epoch {epoch}: train loss :: {train_loss:.3f}, val loss :: {val_loss:.3f}{improvement_status}")
+    
+    # Early stopping check
+    if early_stopping(val_loss):
+      print(f"Early stopping triggered at epoch {epoch}")
+      print(f"Best validation loss: {best_val_loss:.3f} at epoch {best_epoch}")
+      break
+    
+    # Generate sample sonnets only for first few epochs or when we get a new best
+    if epoch < 3 or early_stopping.improved:
+      print('Generating sample output sonnets...')
+      model.eval()
+      sample_count = 0
+      for batch in held_out_sonnet_dataset:
+        if sample_count >= 2:  # Limit to 2 samples to reduce output
+          break
+        encoding = model.tokenizer(batch[1], return_tensors='pt', padding=True, truncation=True).to(device)
+        output = model.generate(encoding['input_ids'], temperature=args.temperature, top_p=args.top_p)
+        print(f'{batch[1]}{output[1]}\n')
+        sample_count += 1
+      print()
+
+  print(f"\nTraining completed! Best validation loss: {best_val_loss:.3f} at epoch {best_epoch}")
 
 
 @torch.no_grad()
@@ -306,18 +390,25 @@ def get_args():
   parser.add_argument("--top_p", type=float, help="Cumulative probability distribution for nucleus sampling.",
                       default=0.9)
 
-  parser.add_argument("--batch_size", help='The training batch size.', type=int, default=8)
-  parser.add_argument("--lr", type=float, help="learning rate", default=1e-4)
+  # Updated default hyperparameters based on analysis
+  parser.add_argument("--batch_size", help='The training batch size.', type=int, default=4)  # Changed from 8 to 4
+  parser.add_argument("--lr", type=float, help="learning rate", default=1.5e-4)  # Changed from 1e-4 to 1.5e-4
   parser.add_argument("--model_size", type=str, help="The model size as specified on hugging face.",
                       choices=['gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl'], default='gpt2')
 
-  # LoRA-specific arguments
-  parser.add_argument("--lora_rank", type=int, default=4,
+  # LoRA-specific arguments with improved defaults
+  parser.add_argument("--lora_rank", type=int, default=4,  # Can be increased to 8 for better performance
                      help="LoRA rank (dimensionality of adaptation)")
   parser.add_argument("--lora_alpha", type=float, default=16.0,
                      help="LoRA alpha (scaling parameter)")
-  parser.add_argument("--lora_dropout", type=float, default=0.0,
+  parser.add_argument("--lora_dropout", type=float, default=0.1,  # Changed from 0.0 to 0.1 for regularization
                      help="LoRA dropout rate")
+
+  # Early stopping parameters
+  parser.add_argument("--early_stopping_patience", type=int, default=5,
+                     help="Number of epochs with no improvement after which training will be stopped")
+  parser.add_argument("--min_improvement", type=float, default=0.01,
+                     help="Minimum change in validation loss to qualify as an improvement")
 
   args = parser.parse_args()
   return args
