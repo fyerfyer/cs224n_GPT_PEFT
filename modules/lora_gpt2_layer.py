@@ -5,7 +5,6 @@ This module provides a LoRA version of the GPT2Layer that replaces linear layers
 with LoRA layers to enable parameter-efficient fine-tuning.
 """
 
-import torch
 from torch import nn
 import torch.nn.functional as F
 
