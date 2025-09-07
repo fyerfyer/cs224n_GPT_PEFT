@@ -7,9 +7,7 @@ fine-tuning by using LoRA layers in the attention mechanism and feed-forward net
 
 import torch
 from torch import nn
-from transformers import GPT2Model as OpenAIGPT2Model
 
-from config import GPT2Config
 from models.base_gpt import GPTPreTrainedModel
 from models.gpt2 import GPT2Model
 from modules.lora_gpt2_layer import LoRAGPT2Layer

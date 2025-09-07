@@ -11,7 +11,7 @@ from einops import rearrange
 from torch import nn
 import torch.nn.functional as F
 
-from modules.lora import LoRALayer, convert_linear_to_lora
+from modules.lora import LoRALayer
 
 
 class LoRACausalSelfAttention(nn.Module):
