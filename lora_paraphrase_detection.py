@@ -1,9 +1,11 @@
-"""
-LoRA-enabled Paraphrase detection for GPT-2.
+'''
+LoRA-enabled Paraphrase detection.
 
-This module provides a LoRA version of the ParaphraseGPT model for parameter-efficient
-fine-tuning on the cloze-style paraphrase detection task.
-"""
+Running:
+  `python lora_paraphrase_detection.py --use_gpu`
+
+trains your LoRAParaphraseGPT model using LoRA fine-tuning and writes the required submission files.
+'''
 
 import argparse
 import random
@@ -29,6 +31,66 @@ TQDM_DISABLE = False
 # Token IDs for "yes" and "no" as specified in the task
 YES_TOKEN_ID = 8505
 NO_TOKEN_ID = 3919
+
+
+class EarlyStopping:
+    """Early stops the training if validation loss doesn't improve after a given patience."""
+    
+    def __init__(self, patience=5, min_improvement=0.01, verbose=True):
+        """
+        Args:
+            patience (int): How long to wait after last time validation loss improved.
+                          Default: 5
+            min_improvement (float): Minimum change in the monitored quantity to qualify as an improvement.
+                          Default: 0.01
+            verbose (bool): If True, prints a message for each validation loss improvement.
+                          Default: True
+        """
+        self.patience = patience
+        self.min_improvement = min_improvement
+        self.verbose = verbose
+        self.counter = 0
+        self.best_score = None
+        self.early_stop = False
+        self.val_loss_min = float('inf')
+        self.improved = False
+
+    def __call__(self, val_loss):
+        """
+        Call this method after each validation phase.
+        
+        Args:
+            val_loss (float): Current validation loss
+            
+        Returns:
+            bool: True if training should be stopped early
+        """
+        score = -val_loss
+        self.improved = False
+
+        if self.best_score is None:
+            self.best_score = score
+            self.save_checkpoint(val_loss)
+            self.improved = True
+        elif score < self.best_score + self.min_improvement:
+            self.counter += 1
+            if self.verbose:
+                print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_score = score
+            self.save_checkpoint(val_loss)
+            self.counter = 0
+            self.improved = True
+
+        return self.early_stop
+
+    def save_checkpoint(self, val_loss):
+        """Saves model when validation loss decrease."""
+        if self.verbose:
+            print(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Model checkpoint updated.')
+        self.val_loss_min = val_loss
 
 
 def seed_everything(seed=11711):
@@ -168,13 +230,23 @@ def train(args):
     print(f"Optimizing {len(lora_parameters)} LoRA parameter tensors")
     optimizer = AdamW(lora_parameters, lr=args.lr, weight_decay=args.weight_decay)
     
+    # Initialize early stopping
+    early_stopping = EarlyStopping(patience=args.early_stopping_patience,
+                                  min_improvement=args.min_improvement,
+                                  verbose=True)
+
     best_dev_acc = 0
+    best_val_loss = float('inf')
+    best_epoch = -1
+
+    print(f"Training with early stopping (patience={args.early_stopping_patience}, min_improvement={args.min_improvement})")
 
     # Training loop
     for epoch in range(args.epochs):
+        # Training phase
         model.train()
         train_loss = 0
-        num_batches = 0
+        num_train_batches = 0
         
         for batch in tqdm(para_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
             # Get batch data
@@ -200,19 +272,57 @@ def train(args):
             optimizer.step()
 
             train_loss += loss.item()
-            num_batches += 1
+            num_train_batches += 1
 
-        train_loss = train_loss / num_batches
+        train_loss = train_loss / num_train_batches
 
-        # Evaluate on dev set
+        # Validation phase
+        model.eval()
+        val_loss = 0
+        num_val_batches = 0
+        
+        with torch.no_grad():
+            for batch in tqdm(para_dev_dataloader, desc=f'val-{epoch}', disable=TQDM_DISABLE):
+                b_ids = batch['token_ids'].to(device)
+                b_mask = batch['attention_mask'].to(device)
+                
+                # Labels processing for validation loss
+                label_ids = batch['labels'].to(device).long()
+                binary_labels = torch.zeros(label_ids.size(0), dtype=torch.long, device=device)
+                binary_labels[label_ids == YES_TOKEN_ID] = 1  # "yes" -> class 1
+                binary_labels[label_ids == NO_TOKEN_ID] = 0   # "no" -> class 0
+                labels = binary_labels
+                
+                logits = model(b_ids, b_mask)
+                loss = F.cross_entropy(logits, labels, reduction='mean')
+                
+                val_loss += loss.item()
+                num_val_batches += 1
+        
+        val_loss = val_loss / num_val_batches
+
+        # Evaluate accuracy on dev set
         dev_acc, dev_f1, *_ = model_eval_paraphrase(para_dev_dataloader, model, device)
 
-        # Save best model
-        if dev_acc > best_dev_acc:
+        # Check for improvement and save best model
+        improvement_status = ""
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
             best_dev_acc = dev_acc
+            best_epoch = epoch
             save_model(model, optimizer, args, args.filepath)
+            improvement_status = " ⭐ NEW BEST!"
 
-        print(f"Epoch {epoch}: train loss :: {train_loss:.3f}, dev acc :: {dev_acc:.3f}")
+        print(f"Epoch {epoch}: train loss :: {train_loss:.3f}, val loss :: {val_loss:.3f}, dev acc :: {dev_acc:.3f}{improvement_status}")
+        
+        # Early stopping check
+        if early_stopping(val_loss):
+            print(f"Early stopping triggered at epoch {epoch}")
+            print(f"Best validation loss: {best_val_loss:.3f} at epoch {best_epoch}")
+            break
+
+    print(f"\nTraining completed! Best validation loss: {best_val_loss:.3f} at epoch {best_epoch}")
+    print(f"Best dev accuracy: {best_dev_acc:.3f}")
 
 
 @torch.no_grad()
@@ -268,39 +378,51 @@ def test(args):
 
 def get_args():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="LoRA-enabled paraphrase detection training")
 
     # Data arguments
-    parser.add_argument("--para_train", type=str, default="data/quora-train.csv")
-    parser.add_argument("--para_dev", type=str, default="data/quora-dev.csv")
-    parser.add_argument("--para_test", type=str, default="data/quora-test-student.csv")
+    parser.add_argument("--para_train", type=str, default="data/quora-train.csv",
+                       help="Path to training data")
+    parser.add_argument("--para_dev", type=str, default="data/quora-dev.csv",
+                       help="Path to dev data")
+    parser.add_argument("--para_test", type=str, default="data/quora-test-student.csv",
+                       help="Path to test data")
     parser.add_argument("--para_dev_out", type=str, default="predictions/lora-para-dev-output.csv")
     parser.add_argument("--para_test_out", type=str, default="predictions/lora-para-test-output.csv")
 
     # Training arguments
-    parser.add_argument("--seed", type=int, default=11711)
-    parser.add_argument("--epochs", type=int, default=3)
-    parser.add_argument("--use_gpu", action='store_true')
-    parser.add_argument("--batch_size", type=int, default=8, 
-                       help='Batch size (8 can fit a 12GB GPU)')
-    parser.add_argument("--lr", type=float, default=1e-4, 
-                       help="Learning rate (higher for LoRA)")
+    parser.add_argument("--seed", type=int, default=11711,
+                       help="Random seed")
+    parser.add_argument("--epochs", type=int, default=3,
+                       help="Number of training epochs (recommended: 3-4)")
+    parser.add_argument("--use_gpu", action='store_true',
+                       help="Use GPU for training")
+    parser.add_argument("--batch_size", type=int, default=12,
+                       help='Batch size (Tesla T4 safe: 8-16, can try 12-20)')
+    parser.add_argument("--lr", type=float, default=1e-4,
+                       help="Learning rate (LoRA recommended: 1e-4 to 2e-4)")
     parser.add_argument("--weight_decay", type=float, default=0.01,
                        help="Weight decay for regularization")
 
     # Model arguments
     parser.add_argument("--model_size", type=str,
-                       choices=['gpt2', 'gpt2-medium', 'gpt2-large'], 
+                       choices=['gpt2', 'gpt2-medium', 'gpt2-large'],
                        default='gpt2',
                        help="GPT-2 model size")
 
-    # LoRA-specific arguments
-    parser.add_argument("--lora_rank", type=int, default=4,
-                       help="LoRA rank (dimensionality of adaptation)")
+    # LoRA-specific arguments (Tesla T4 optimized defaults)
+    parser.add_argument("--lora_rank", type=int, default=8,
+                       help="LoRA rank (recommended: 4-16 for good performance/memory balance)")
     parser.add_argument("--lora_alpha", type=float, default=16.0,
-                       help="LoRA alpha (scaling parameter)")
-    parser.add_argument("--lora_dropout", type=float, default=0.0,
-                       help="LoRA dropout rate")
+                       help="LoRA alpha parameter (typically rank * 2-4)")
+    parser.add_argument("--lora_dropout", type=float, default=0.1,
+                       help="LoRA dropout rate (0.0-0.1 for regularization)")
+
+    # Early stopping parameters
+    parser.add_argument("--early_stopping_patience", type=int, default=5,
+                       help="Number of epochs with no improvement after which training will be stopped")
+    parser.add_argument("--min_improvement", type=float, default=0.01,
+                       help="Minimum change in validation loss to qualify as an improvement")
 
     args = parser.parse_args()
     return args
@@ -328,6 +450,25 @@ def add_arguments(args):
 if __name__ == "__main__":
     args = get_args()
     args.filepath = f'lora-{args.epochs}-{args.lr}-{args.lora_rank}-paraphrase.pt'
+    
+    print("=" * 70)
+    print("🚀 LoRA Fine-tuning for Paraphrase Detection")
+    print("=" * 70)
+    print(f"Model: {args.model_size}")
+    print(f"LoRA Configuration:")
+    print(f"  - Rank: {args.lora_rank}")
+    print(f"  - Alpha: {args.lora_alpha}")
+    print(f"  - Dropout: {args.lora_dropout}")
+    print(f"Training Parameters:")
+    print(f"  - Learning Rate: {args.lr}")
+    print(f"  - Epochs: {args.epochs}")
+    print(f"  - Batch Size: {args.batch_size}")
+    print(f"  - GPU: {args.use_gpu}")
+    print(f"Early Stopping:")
+    print(f"  - Patience: {args.early_stopping_patience}")
+    print(f"  - Min Improvement: {args.min_improvement}")
+    print("=" * 70)
+    
     seed_everything(args.seed)
     train(args)
     test(args)
